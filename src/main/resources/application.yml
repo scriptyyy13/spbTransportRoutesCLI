@@ -1,0 +1,30 @@
+spring:
+  main:
+    banner-mode: off
+  application:
+    name: spbTransportRoutesCLI
+
+  jpa:
+    database-platform: org.eclipse.persistence.platform.database.PostgreSQLPlatform
+    show-sql: false
+    properties:
+      eclipselink.logging.logger: JavaLogger
+      eclipselink.logging.level: SEVERE
+      eclipselink.ddl-generation: none
+      eclipselink.ddl-generation.output-mode: none
+
+      jakarta.persistence.jdbc:
+        batch-size: 20
+
+  datasource:
+    url: ${DB_URL}
+    username: ${DB_USER}
+    password: ${DB_PASSWORD}
+    driver-class-name: org.postgresql.Driver
+
+logging:
+  level:
+    java.util.logging: OFF
+    root: OFF
+    org.eclipse.persistence: OFF
+    org.springframework: OFF

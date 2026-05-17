@@ -1,0 +1,17 @@
+<persistence xmlns="https://jakarta.ee/xml/ns/persistence"
+             version="3.0">
+
+    <persistence-unit name="default">
+        <exclude-unlisted-classes>false</exclude-unlisted-classes>
+
+        <class>scriptyyy.bd.cli.app.entity.Route</class>
+        <class>scriptyyy.bd.cli.app.entity.Stop</class>
+        <class>scriptyyy.bd.cli.app.entity.RouteStop</class>
+
+        <properties>
+            <property name="eclipselink.logging.logger" value="JavaLogger"/>
+            <property name="eclipselink.logging.level" value="SEVERE"/>
+        </properties>
+    </persistence-unit>
+
+</persistence>
