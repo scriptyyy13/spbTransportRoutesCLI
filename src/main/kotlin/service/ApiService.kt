@@ -87,7 +87,7 @@ class ApiService(
     }
 
     private fun fetchPage(baseUrl: String, page: Int, token: String): JsonObject? {
-        val url = "$baseUrl?page=$page&per_page=200"
+        val url = "$baseUrl?page=$page&per_page=100"
         return fetchJson(url, token).also {
             if (it == null) {
                 println("Ошибка при загрузке страницы $page")
