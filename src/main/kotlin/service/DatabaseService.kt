@@ -37,6 +37,18 @@ class DatabaseService(
         routeStopRepository.save(routeStop)
     }
 
+    fun getAllRoutes(): List<Route> {
+        return routeRepository.findAll()
+    }
+
+    fun getAllStops(): List<Stop> {
+        return stopRepository.findAll()
+    }
+
+    fun getAllRouteStops(): List<RouteStop> {
+        return routeStopRepository.findAll()
+    }
+
     /**
      * Проверяет существует ли уже такой RouteStop
      */
