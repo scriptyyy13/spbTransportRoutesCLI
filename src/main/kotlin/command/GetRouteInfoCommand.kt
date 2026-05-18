@@ -1,6 +1,7 @@
 package scriptyyy.bd.cli.app.command
 
 import scriptyyy.bd.cli.app.service.DatabaseService
+import kotlin.math.round
 
 class GetRouteInfoCommand(private val dbService: DatabaseService) : Command {
 
@@ -35,7 +36,7 @@ class GetRouteInfoCommand(private val dbService: DatabaseService) : Command {
         println("id маршрута: ${route.routeId}")
 
         for ((dir, stopsInDir) in directions) {
-            val totalDistance = stopsInDir.sumOf { it.distance }
+            val totalDistance = "%.2f".format(stopsInDir.sumOf { it.distance })
             println("Направление $dir - Расстояние: $totalDistance км")
         }
 
