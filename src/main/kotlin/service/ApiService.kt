@@ -15,7 +15,10 @@ import java.security.SecureRandom
 @Service
 class ApiService(
     private val dbService: DatabaseService,
-    private val gson: Gson
+    private val gson: Gson,
+    private val routeCache: MutableMap<String, Route> = mutableMapOf<String, Route>(),
+    private val stopCache: MutableMap<String, Stop> = mutableMapOf<String, Stop>(),
+    private val routeStopCache: HashSet<String> = hashSetOf<String>()
 ) {
     init {
         disableSslVerification()
@@ -23,6 +26,7 @@ class ApiService(
 
     fun loadDataFromApi(): Boolean {
         return try {
+            preloadCaches()
             val token = getToken() ?: return false
             val baseUrl = EnvConfig.getApiUrl()
 
@@ -30,14 +34,14 @@ class ApiService(
             var totalLoaded = 0
             var totalSkipped = 0
             var timeSpent = 0L
-            var total = 0
+            var totalRecords = 0
 
             while (true) {
                 val startTime = System.currentTimeMillis()
                 val json = fetchPage(baseUrl, page, token)
                     ?: return false
                 if (page == 1) {
-                    total = json.get("count")?.asInt ?: 0
+                    totalRecords = json.get("count")?.asInt ?: 0
                 }
                 val results = json.getAsJsonArray("results")
                 if (results.isEmpty) break
@@ -49,9 +53,18 @@ class ApiService(
 
                 println("Страница $page: загружено $loaded записей, пропущено $skipped дубликатов (всего: $totalLoaded)")
 
+                val elapsed = System.currentTimeMillis() - startTime
+                timeSpent += elapsed
+
+                val avgPageTime = timeSpent / page
+                val remainingPages = (totalRecords / 100) - page
+                println("Осталось примерно: ${formatTime(avgPageTime * remainingPages)}")
+
+                if (page == 1) {
+                    dbService.createTrigger() // создаем триггер после записи первой страницы
+                }
+
                 page++
-                timeSpent += System.currentTimeMillis() - startTime
-                println("Осталось примерно: ${formatTime((timeSpent / page) * ((total / 100) - page))}")
             }
 
             println("Данные загружены: $totalLoaded новых записей, $totalSkipped дубликатов пропущено")
@@ -74,6 +87,27 @@ class ApiService(
             if (hours > 0) append("${hours}ч ")
             if (minutes > 0 || hours > 0) append("${minutes}м ")
             append("${seconds}с")
+        }
+    }
+
+    private fun preloadCaches() {
+        dbService.getAllRoutes().forEach {
+            routeCache[it.routeId] = it
+        }
+
+        dbService.getAllStops().forEach {
+            stopCache[it.stopId] = it
+        }
+
+        dbService.getAllRouteStops().forEach {
+            routeStopCache.add(
+                buildRouteStopKey(
+                    it.route?.routeId ?: "",
+                    it.stop?.stopId ?: "",
+                    it.stopNumber,
+                    it.direction
+                )
+            )
         }
     }
 
@@ -126,6 +160,15 @@ class ApiService(
         HttpsURLConnection.setDefaultHostnameVerifier { _, _ -> true }
     }
 
+    private fun buildRouteStopKey(
+        routeId: String,
+        stopId: String,
+        number: Int,
+        direction: String
+    ): String {
+        return "$routeId|$stopId|$number|$direction"
+    }
+
     /**
      * Обрабатывает результаты и возвращает количество загруженных и пропущенных записей
      */
@@ -145,10 +188,19 @@ class ApiService(
                 val number = obj["number"].asInt
                 val direction = obj["direction"].asString
 
-                if (routeStopExists(route, stop, number, direction)) {
+                val key = buildRouteStopKey(
+                    route.routeId,
+                    stop.stopId,
+                    number,
+                    direction
+                )
+
+                if (key in routeStopCache) {
                     skipped++
                     continue
                 }
+
+                routeStopCache.add(key)
 
                 batch.add(
                     RouteStop().apply {
@@ -156,7 +208,11 @@ class ApiService(
                         this.stop = stop
                         this.direction = direction
                         this.stopNumber = number
-                        this.distance = obj["stop_distance"].asString.toDoubleOrNull() ?: 0.0
+                        this.distance =
+                            obj["stop_distance"]
+                                .asString
+                                .toDoubleOrNull() ?: 0.0
+
                         this.nextStopId = obj["next_stop"].asString
                     }
                 )
@@ -164,7 +220,7 @@ class ApiService(
                 loaded++
 
             } catch (e: Exception) {
-                println("ошибка записи: ${e.message}")
+                println("Ошибка записи: ${e.message}")
             }
         }
 
@@ -177,45 +233,38 @@ class ApiService(
 
     private fun getOrCreateRoute(obj: JsonObject): Route {
         val routeId = obj["route_id"].asString
-        val shortName = obj["route_short_name"].asString
-        val longName = obj["route_long_name"].asString
-        val transportType = obj["transport_type"].asString
 
-        val (route, _) = dbService.findRouteByIdOrName("i$routeId")
-
-        return route ?: Route().apply {
-            this.routeId = routeId
-            this.shortName = shortName
-            this.longName = longName
-            this.transportType = transportType
-        }.also {
-            dbService.saveRoute(it)
-            dbService.createTrigger()
+        routeCache[routeId]?.let {
+            return it
         }
+
+        val route = Route().apply {
+            this.routeId = routeId
+            this.shortName = obj["route_short_name"].asString
+            this.longName = obj["route_long_name"].asString
+            this.transportType = obj["transport_type"].asString
+        }
+
+        dbService.saveRoute(route)
+        routeCache[routeId] = route
+        return route
     }
 
     private fun getOrCreateStop(obj: JsonObject): Stop {
         val stopId = obj["stop_id"].asString
-        val stopName = obj["stop_name"].asString
-        val coordinates = obj["coordinates"].asString
 
-        val (stop, _) = dbService.findStopByIdOrName("i$stopId")
-
-        return stop ?: Stop().apply {
-            this.stopId = stopId
-            this.name = stopName
-            this.coordinates = coordinates
-        }.also {
-            dbService.saveStop(it)
+        stopCache[stopId]?.let {
+            return it
         }
-    }
 
-    private fun routeStopExists(
-        route: Route,
-        stop: Stop,
-        number: Int,
-        direction: String
-    ): Boolean {
-        return dbService.routeStopExists(route, stop, number, direction)
+        val stop = Stop().apply {
+            this.stopId = stopId
+            this.name = obj["stop_name"].asString
+            this.coordinates = obj["coordinates"].asString
+        }
+
+        dbService.saveStop(stop)
+        stopCache[stopId] = stop
+        return stop
     }
 }
