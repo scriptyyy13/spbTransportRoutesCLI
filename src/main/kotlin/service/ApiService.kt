@@ -65,6 +65,7 @@ class ApiService(
                 }
 
                 page++
+                if (loaded + skipped < 100) break // если на странице меньше 100 элементов, то она последняя
             }
             println("\nДанные загружены: $totalLoaded новых записей, $totalSkipped дубликатов пропущено")
             true
