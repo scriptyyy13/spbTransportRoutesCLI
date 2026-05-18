@@ -56,8 +56,9 @@ class ApiService(
 
                 val avgPageTime = timeSpent / page
                 val remainingPages = (totalRecords / 100) - page
+                val formatedTime = formatTime(avgPageTime * remainingPages)
                 print("\rСтраница $page: загружено $loaded записей, пропущено $skipped дубликатов (всего: $totalLoaded)" +
-                "\nОсталось примерно: ${formatTime(avgPageTime * remainingPages)}")
+                if (formatedTime != "0с") "\nОсталось примерно: ${formatedTime}" else "\n")
 
                 if (page == 1) {
                     dbService.createTrigger() // создаем триггер после записи первой страницы
@@ -65,8 +66,7 @@ class ApiService(
 
                 page++
             }
-
-            println("Данные загружены: $totalLoaded новых записей, $totalSkipped дубликатов пропущено")
+            println("\nДанные загружены: $totalLoaded новых записей, $totalSkipped дубликатов пропущено")
             true
         } catch (e: Exception) {
             println("Ошибка загрузки: ${e.message}")
