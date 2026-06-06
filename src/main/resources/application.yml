@@ -4,6 +4,10 @@ spring:
   application:
     name: spbTransportRoutesCLI
 
+  sql:
+    init:
+      mode: always
+
   jpa:
     database-platform: org.eclipse.persistence.platform.database.PostgreSQLPlatform
     show-sql: false
