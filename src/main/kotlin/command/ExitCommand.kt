@@ -4,7 +4,7 @@ import kotlin.system.exitProcess
 
 class ExitCommand : Command {
 
-    override fun execute(args: List<String>) {
+    override suspend fun execute(args: List<String>) {
         println("Завершение работы")
         exitProcess(0)
     }

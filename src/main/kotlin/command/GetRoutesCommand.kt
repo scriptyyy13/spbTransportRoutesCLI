@@ -4,7 +4,7 @@ import scriptyyy.bd.cli.app.service.DatabaseService
 
 class GetRoutesCommand(private val dbService: DatabaseService) : Command {
 
-    override fun execute(args: List<String>) {
+    override suspend fun execute(args: List<String>) {
         if (args.isEmpty()) {
             println("Ошибка: укажите id или название остановки")
             return

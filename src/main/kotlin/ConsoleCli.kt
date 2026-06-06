@@ -14,7 +14,7 @@ class ConsoleCli(
 
     private lateinit var commands: List<Command>
 
-    fun run() {
+    suspend fun run() {
         initCommands()
 
         println("Введите help для списка команд")

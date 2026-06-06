@@ -5,7 +5,7 @@ import kotlin.math.round
 
 class GetRouteInfoCommand(private val dbService: DatabaseService) : Command {
 
-    override fun execute(args: List<String>) {
+    override suspend fun execute(args: List<String>) {
         if (args.isEmpty()) {
             println("Ошибка: укажите название или номер маршрута")
             return

@@ -4,7 +4,7 @@ import scriptyyy.bd.cli.app.service.ApiService
 
 class UpdateInfoCommand(private val apiService: ApiService) : Command {
 
-    override fun execute(args: List<String>) {
+    override suspend fun execute(args: List<String>) {
         println("Загружаю данные с API...")
         if (apiService.loadDataFromApi()) {
             println("Данные успешно загружены")

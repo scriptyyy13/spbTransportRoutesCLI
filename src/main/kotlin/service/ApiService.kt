@@ -3,6 +3,8 @@ package scriptyyy.bd.cli.app.service
 import com.google.gson.Gson
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
+import kotlinx.coroutines.*
+import kotlinx.coroutines.channels.Channel
 import scriptyyy.bd.cli.app.config.EnvConfig
 import scriptyyy.bd.cli.app.entity.Route
 import scriptyyy.bd.cli.app.entity.RouteStop
@@ -11,63 +13,81 @@ import java.net.URL
 import org.springframework.stereotype.Service
 import javax.net.ssl.*
 import java.security.SecureRandom
+import java.util.concurrent.atomic.AtomicInteger
 
 @Service
 class ApiService(
     private val dbService: DatabaseService,
     private val gson: Gson,
-    private val routeCache: MutableMap<String, Route> = mutableMapOf<String, Route>(),
-    private val stopCache: MutableMap<String, Stop> = mutableMapOf<String, Stop>(),
-    private val routeStopCache: HashSet<String> = hashSetOf<String>()
+    private val routeCache: MutableMap<String, Route> = mutableMapOf(),
+    private val stopCache: MutableMap<String, Stop> = mutableMapOf(),
+    private val routeStopCache: HashSet<String> = hashSetOf()
 ) {
+
     init {
         disableSslVerification()
     }
 
-    fun loadDataFromApi(): Boolean {
-        return try {
+    suspend fun loadDataFromApi(): Boolean = coroutineScope {
+        try {
             preloadCaches()
-            val token = getToken() ?: return false
+            val token = getToken() ?: return@coroutineScope false
             val baseUrl = EnvConfig.getApiUrl()
 
-            var page = 1
+            // данные о страницах
+            val firstPageJson = withContext(Dispatchers.IO) { fetchPage(baseUrl, 1, token) }
+                ?: return@coroutineScope false
+
+            val totalRecords = firstPageJson.get("count")?.asInt ?: 0
+            dbService.createTrigger()
+
+            if (totalRecords == 0) return@coroutineScope true
+
+            val perPage = 100
+            val totalPages = (totalRecords + perPage - 1) / perPage
+
             var totalLoaded = 0
             var totalSkipped = 0
-            var timeSpent = 0L
-            var totalRecords = 0
+            val startTime = System.currentTimeMillis()
 
-            while (true) {
-                val startTime = System.currentTimeMillis()
-                val json = fetchPage(baseUrl, page, token)
-                    ?: return false
-                if (page == 1) {
-                    totalRecords = json.get("count")?.asInt ?: 0
-                }
-                val results = json.getAsJsonArray("results")
-                if (results.isEmpty) break
+            // храним полученные данные
+            val pageChannel = Channel<JsonObject>(capacity = Channel.BUFFERED)
+            var elemetsCount = AtomicInteger(0)
 
-                val (loaded, skipped) = processResults(results)
+            println("Запуск получения данных с API...")
 
-                totalLoaded += loaded
-                totalSkipped += skipped
+            // асинхронное получение данных
+            val producerJob = launch(Dispatchers.IO) {
+                (1..totalPages).map { page ->
+                    async {
+                        val json = fetchPage(baseUrl, page, token)
+                        if (json != null) {
+                            pageChannel.send(json) // полученную страницу в очередь
+                            elemetsCount.incrementAndGet()
+                        }
+                    }
+                }.awaitAll()
 
-                val elapsed = System.currentTimeMillis() - startTime
-                timeSpent += elapsed
-
-                val avgPageTime = timeSpent / page
-                val remainingPages = (totalRecords / 100) - page
-                val formatedTime = formatTime(avgPageTime * remainingPages)
-                print("\rСтраница $page: загружено $loaded записей, пропущено $skipped дубликатов (всего: $totalLoaded)" +
-                if (formatedTime != "0с") "\nОсталось примерно: ${formatedTime}" else "\n")
-
-                if (page == 1) {
-                    dbService.createTrigger() // создаем триггер после записи первой страницы
-                }
-
-                page++
-                if (loaded + skipped < 100) break // если на странице меньше 100 элементов, то она последняя
+                println("Получено ${elemetsCount.get()} страниц.\nНачинается загрузка в бд.")
+                // после завершения чтения закрываем канал
+                pageChannel.close()
             }
-            println("\nДанные загружены: $totalLoaded новых записей, $totalSkipped дубликатов пропущено")
+
+
+            // последовательно загружаем данные
+            for (json in pageChannel) {
+                val results = json.getAsJsonArray("results")
+                if (results != null && !results.isEmpty) {
+                    val (loaded, skipped) = processResults(results)
+                    totalLoaded += loaded
+                    totalSkipped += skipped
+                }
+            }
+
+            producerJob.join()
+
+            val elapsedTime = System.currentTimeMillis() - startTime
+            println("\nДанные загружены за ${formatTime(elapsedTime)}: $totalLoaded новых записей, $totalSkipped дубликатов пропущено")
             true
         } catch (e: Exception) {
             println("Ошибка загрузки: ${e.message}")
@@ -78,7 +98,6 @@ class ApiService(
 
     private fun formatTime(ms: Long): String {
         val totalSeconds = ms / 1000
-
         val hours = totalSeconds / 3600
         val minutes = (totalSeconds % 3600) / 60
         val seconds = totalSeconds % 60
@@ -91,14 +110,8 @@ class ApiService(
     }
 
     private fun preloadCaches() {
-        dbService.getAllRoutes().forEach {
-            routeCache[it.routeId] = it
-        }
-
-        dbService.getAllStops().forEach {
-            stopCache[it.stopId] = it
-        }
-
+        dbService.getAllRoutes().forEach { routeCache[it.routeId] = it }
+        dbService.getAllStops().forEach { stopCache[it.stopId] = it }
         dbService.getAllRouteStops().forEach {
             routeStopCache.add(
                 buildRouteStopKey(
@@ -137,10 +150,8 @@ class ApiService(
             conn.setRequestProperty("Accept", "application/json")
 
             val response = conn.getInputStream().bufferedReader().use { it.readText() }
-
             gson.fromJson(response, JsonObject::class.java)
         } catch (e: Exception) {
-            println("Ошибка при получении данных (закончились данные или ошибка соединения)")
             null
         }
     }
@@ -160,40 +171,24 @@ class ApiService(
         HttpsURLConnection.setDefaultHostnameVerifier { _, _ -> true }
     }
 
-    private fun buildRouteStopKey(
-        routeId: String,
-        stopId: String,
-        number: Int,
-        direction: String
-    ): String {
+    private fun buildRouteStopKey(routeId: String, stopId: String, number: Int, direction: String): String {
         return "$routeId|$stopId|$number|$direction"
     }
 
-    /**
-     * Обрабатывает результаты и возвращает количество загруженных и пропущенных записей
-     */
     private fun processResults(results: JsonArray): Pair<Int, Int> {
         var loaded = 0
         var skipped = 0
-
         val batch = mutableListOf<RouteStop>()
 
         for (item in results) {
             try {
                 val obj = item.asJsonObject
-
                 val route = getOrCreateRoute(obj)
                 val stop = getOrCreateStop(obj)
-
                 val number = obj["number"].asInt
                 val direction = obj["direction"].asString
 
-                val key = buildRouteStopKey(
-                    route.routeId,
-                    stop.stopId,
-                    number,
-                    direction
-                )
+                val key = buildRouteStopKey(route.routeId, stop.stopId, number, direction)
 
                 if (key in routeStopCache) {
                     skipped++
@@ -208,17 +203,11 @@ class ApiService(
                         this.stop = stop
                         this.direction = direction
                         this.stopNumber = number
-                        this.distance =
-                            obj["stop_distance"]
-                                .asString
-                                .toDoubleOrNull() ?: 0.0
-
+                        this.distance = obj["stop_distance"].asString.toDoubleOrNull() ?: 0.0
                         this.nextStopId = obj["next_stop"].asString
                     }
                 )
-
                 loaded++
-
             } catch (e: Exception) {
                 println("Ошибка записи: ${e.message}")
             }
@@ -233,10 +222,7 @@ class ApiService(
 
     private fun getOrCreateRoute(obj: JsonObject): Route {
         val routeId = obj["route_id"].asString
-
-        routeCache[routeId]?.let {
-            return it
-        }
+        routeCache[routeId]?.let { return it }
 
         val route = Route().apply {
             this.routeId = routeId
@@ -252,10 +238,7 @@ class ApiService(
 
     private fun getOrCreateStop(obj: JsonObject): Stop {
         val stopId = obj["stop_id"].asString
-
-        stopCache[stopId]?.let {
-            return it
-        }
+        stopCache[stopId]?.let { return it }
 
         val stop = Stop().apply {
             this.stopId = stopId
