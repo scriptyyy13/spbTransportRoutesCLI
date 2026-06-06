@@ -33,7 +33,10 @@ class ConsoleCli(
             val cmd = commands.find { it.getName() == cmdName }
 
             if (cmd != null) {
+                // val startTime = System.currentTimeMillis()
                 cmd.execute(args)
+                // для дебага
+                // println("Время выполнения:" + (System.currentTimeMillis() - startTime))
             } else {
                 println("Неизвестная команда: $cmdName")
             }
